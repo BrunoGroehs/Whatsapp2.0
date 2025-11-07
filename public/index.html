@@ -45,6 +45,16 @@
         <button id="btnSubscribe" class="secondary">Assinar webhook</button>
       </div>
 
+      <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e5e7eb;" />
+      
+      <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">🔍 Diagnóstico: Por que minha WABA não aparece?</h2>
+      <p class="muted">Cole um User Access Token (do Graph Explorer com o usuário que faz login) e clique para diagnosticar:</p>
+      <div class="row">
+        <input id="debugToken" type="text" placeholder="EAAB..." style="width: 400px;" />
+        <button id="btnDebug" class="secondary">Diagnosticar</button>
+      </div>
+      <div id="debugResults" style="margin-top: 1rem;"></div>
+
       <p class="muted">Logs:</p>
       <pre id="logs"></pre>
     </div>
@@ -79,11 +89,17 @@
           return;
         }
 
+        const businessId = window.__PUBLIC_CONFIG__.facebookBusinessId;
+        const extras = { version: 'v3' };
+        if (businessId) {
+          // hint para o fluxo escolher o business correto
+          extras.setup = { business: { id: businessId } };
+        }
         FB.login(fbLoginCallback, {
           config_id: configId,
           response_type: 'code',
           override_default_response_type: true,
-          extras: { version: 'v3' }
+          extras
         });
       }
 
@@ -151,6 +167,42 @@
         fetch('/api/subscribeWebhook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba_id: wabaId }) })
           .then(r => r.json()).then(json => { log('subscribeWebhook result', json); setStatus(json.success ? 'Webhook assinado.' : 'Falha ao assinar', !!json.success); })
           .catch(err => { log('subscribeWebhook error', err); setStatus('Erro no backend', false); });
+      });
+
+      document.getElementById('btnDebug').addEventListener('click', () => {
+        const token = document.getElementById('debugToken').value.trim();
+        if (!token) { setStatus('Informe o User Access Token', false); return; }
+        setStatus('Diagnosticando...', true);
+        document.getElementById('debugResults').innerHTML = '<p class="muted">Aguarde...</p>';
+        fetch('/api/debug/wabas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ access_token: token }) })
+          .then(r => r.json()).then(json => {
+            log('Diagnóstico completo', json);
+            let html = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;">';
+            html += '<h3 style="margin:0 0 0.5rem;">📋 Resultado do Diagnóstico</h3>';
+            
+            if (json.summary) {
+              html += '<h4 style="margin:1rem 0 0.5rem;">⚠️ Problemas Encontrados:</h4><ul>';
+              json.summary.issues.forEach(issue => html += `<li>${issue}</li>`);
+              html += '</ul>';
+              
+              if (json.summary.recommendations.length) {
+                html += '<h4 style="margin:1rem 0 0.5rem;">💡 Recomendações:</h4><ul>';
+                json.summary.recommendations.forEach(rec => html += `<li>${rec}</li>`);
+                html += '</ul>';
+              }
+            }
+            
+            html += '<details style="margin-top:1rem;"><summary style="cursor:pointer;font-weight:600;">Ver dados completos (JSON)</summary>';
+            html += `<pre style="margin-top:0.5rem;max-height:300px;overflow:auto;">${JSON.stringify(json, null, 2)}</pre></details>`;
+            html += '</div>';
+            document.getElementById('debugResults').innerHTML = html;
+            setStatus('Diagnóstico concluído.', true);
+          })
+          .catch(err => { 
+            log('Diagnóstico error', err); 
+            setStatus('Erro ao diagnosticar', false);
+            document.getElementById('debugResults').innerHTML = '<p style="color:#b45309;">Erro ao chamar diagnóstico. Veja logs.</p>';
+          });
       });
     </script>
   </body>

@@ -39,6 +39,7 @@ app.get('/config.js', (req, res) => {
   const safeConfig = {
     facebookAppId: process.env.FACEBOOK_APP_ID || '',
     facebookConfigId: process.env.FACEBOOK_CONFIG_ID || '',
+    facebookBusinessId: process.env.FACEBOOK_BUSINESS_ID || '',
     appUrl: APP_URL || '',
     graphApiVersion: GRAPH_API_VERSION
   };
@@ -117,6 +118,79 @@ app.post('/api/subscribeWebhook', async (req, res) => {
     return res.json({ success: true, result: data });
   } catch (err) {
     return res.status(500).json({ error: 'subscribeWebhook failed', details: err?.response?.data || err.message });
+  }
+});
+
+// Debug endpoint: diagnose why existing WABA doesn't appear in Embedded Signup
+app.post('/api/debug/wabas', async (req, res) => {
+  try {
+    const { access_token } = req.body || {};
+    if (!access_token) return res.status(400).json({ error: 'Missing access_token in body' });
+
+    const diagnosis = { timestamp: new Date().toISOString(), checks: [] };
+
+    // 1. Get user's businesses with owned WABAs
+    try {
+      const { data: bizData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/me`, {
+        params: { fields: 'businesses{id,name,owned_whatsapp_business_accounts{id,name,timezone}}', access_token }
+      });
+      diagnosis.checks.push({ check: 'Businesses with owned WABAs', success: true, data: bizData });
+    } catch (err) {
+      diagnosis.checks.push({ check: 'Businesses with owned WABAs', success: false, error: err?.response?.data || err.message });
+    }
+
+    // 2. Get user's businesses with client (shared) WABAs
+    try {
+      const { data: clientData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/me`, {
+        params: { fields: 'businesses{id,name,client_whatsapp_business_accounts{id,name}}', access_token }
+      });
+      diagnosis.checks.push({ check: 'Businesses with client (shared) WABAs', success: true, data: clientData });
+    } catch (err) {
+      diagnosis.checks.push({ check: 'Businesses with client WABAs', success: false, error: err?.response?.data || err.message });
+    }
+
+    // 3. Debug token to see granted scopes
+    try {
+      const { data: debugData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/debug_token`, {
+        params: { input_token: access_token, access_token }
+      });
+      diagnosis.checks.push({ check: 'Token debug (scopes)', success: true, data: debugData });
+    } catch (err) {
+      diagnosis.checks.push({ check: 'Token debug', success: false, error: err?.response?.data || err.message });
+    }
+
+    // 4. Summary and recommendations
+    const summary = { issues: [], recommendations: [] };
+    
+    const ownedCheck = diagnosis.checks.find(c => c.check === 'Businesses with owned WABAs');
+    if (ownedCheck?.success) {
+      const businesses = ownedCheck.data?.businesses?.data || [];
+      const totalOwned = businesses.reduce((sum, b) => sum + (b.owned_whatsapp_business_accounts?.data?.length || 0), 0);
+      if (totalOwned === 0) {
+        summary.issues.push('Nenhuma WABA "owned" encontrada. WABAs compartilhadas não aparecem no Embedded Signup.');
+        summary.recommendations.push('Verifique se você é Admin do Business Manager que possui a WABA.');
+        summary.recommendations.push('Transfira a propriedade da WABA para o Business correto (Business Settings > WhatsApp Accounts).');
+      } else {
+        summary.issues.push(`${totalOwned} WABA(s) owned encontrada(s). Deveria aparecer no seletor.`);
+      }
+    }
+
+    const scopeCheck = diagnosis.checks.find(c => c.check === 'Token debug (scopes)');
+    if (scopeCheck?.success) {
+      const scopes = scopeCheck.data?.data?.scopes || [];
+      const hasWhatsAppManagement = scopes.includes('whatsapp_business_management');
+      const hasBusinessManagement = scopes.includes('business_management');
+      if (!hasWhatsAppManagement || !hasBusinessManagement) {
+        summary.issues.push('Escopos insuficientes no token.');
+        summary.recommendations.push('Certifique-se que a configuração (config_id) inclui whatsapp_business_management e business_management.');
+        summary.recommendations.push('Refaça o login e aceite todas as permissões solicitadas.');
+      }
+    }
+
+    diagnosis.summary = summary;
+    return res.json(diagnosis);
+  } catch (err) {
+    return res.status(500).json({ error: 'debug/wabas failed', details: err?.response?.data || err.message });
   }
 });
 

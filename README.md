@@ -23,6 +23,7 @@ Copie `.env.example` para `.env` e preencha:
 FACEBOOK_APP_ID=123456789012345
 FACEBOOK_APP_SECRET=SEU_APP_SECRET
 FACEBOOK_CONFIG_ID=SEU_CONFIG_ID_EMBEDDED_SIGNUP
+FACEBOOK_BUSINESS_ID=SEU_BUSINESS_ID   # opcional: pré-seleciona o Business correto no diálogo do Embedded Signup
 WEBHOOK_VERIFY_TOKEN=token-verificacao-webhook
 APP_URL=https://SEU-DOMINIO-EASYPANEL
 PORT=3000
@@ -53,7 +54,7 @@ Certifique-se que o `APP_URL` (ex: `https://casaecosustentavel-whatsapp-coex.k3g
 ## 5. Fluxo Front-End
 
 1. Usuário clica em "Login com Facebook".
-2. `FB.login()` é chamado com `config_id`, `response_type: 'code'`, `override_default_response_type: true`.
+2. `FB.login()` é chamado com `config_id`, `response_type: 'code'`, `override_default_response_type: true`. Se `FACEBOOK_BUSINESS_ID` for definido, o front-end envia `extras.setup.business` para pré-selecionar o Business correto e facilitar a listagem de WABAs existentes.
 3. Após completar o fluxo, o callback devolve `response.authResponse.code`.
 4. Listener `postMessage` captura evento `WA_EMBEDDED_SIGNUP` contendo `waba_id` e `phone_number_id`.
 5. Front-end envia via `fetch` para `/api/fbAuthCode` (code + IDs opcionais) para que o backend troque por token.
@@ -115,7 +116,71 @@ Configure a URL do webhook (ex: `https://SEU-DOMINIO/webhook`) no painel do App 
 * Adicionar testes automatizados (Jest, supertest) e lint.
 * Configurar agregação de logs (ex: enviar stdout do container para Loki/ELK). Pretty logs só local.
 
-## 12. Referências
+## 12. Troubleshooting: Por que minha WABA não aparece no Embedded Signup?
+
+### Problema
+Ao clicar em "Login com Facebook" no fluxo de Embedded Signup, só aparece a opção "Criar uma conta do WhatsApp Business", mas não vejo minha WABA existente para conectar.
+
+### Ferramenta de Diagnóstico
+
+A página principal agora inclui uma seção de diagnóstico. Para usar:
+
+1. Obtenha um **User Access Token** do usuário que faz o login:
+   - Vá para [Graph Explorer](https://developers.facebook.com/tools/explorer/)
+   - Faça login com a conta que tem acesso à WABA
+   - Solicite as permissões: `whatsapp_business_management`, `business_management`
+   - Copie o token gerado
+
+2. Na página do app (`http://localhost:3000` ou sua URL do Easypanel):
+   - Role até a seção "🔍 Diagnóstico"
+   - Cole o token no campo
+   - Clique em **Diagnosticar**
+
+3. O sistema vai verificar:
+   - Quais Businesses você tem acesso
+   - Quais WABAs são "owned" (propriedade) vs "client" (compartilhadas)
+   - Se os escopos necessários foram concedidos
+   - Recomendações específicas para seu caso
+
+### Causas comuns
+
+| Problema | Solução |
+|----------|---------|
+| Nenhuma WABA "owned" encontrada | Você precisa ser **Admin** do Business Manager que possui a WABA. Verifique em Business Settings > Accounts > WhatsApp Accounts se você tem papel de Admin. |
+| WABA aparece como "client" (compartilhada) | WABAs compartilhadas não aparecem no Embedded Signup. Transfira a propriedade para o Business correto ou peça ao proprietário para conceder acesso completo. |
+| Escopos insuficientes | A configuração (config_id) deve incluir `whatsapp_business_management` e `business_management`. Recrie a configuração no painel do App se necessário. |
+| Config_id sem "existing assets" | Ao criar a configuração de Embedded Signup, marque a opção "Allow existing assets" (permitir usar ativos existentes). |
+| Business ID incorreto | Se definiu `FACEBOOK_BUSINESS_ID`, garanta que é o ID do Business que realmente possui a WABA. |
+| Usuário não é tester do App | Se o App está em modo desenvolvimento, adicione o usuário como Tester/Admin em Roles do App. |
+
+### Verificação manual (Graph API)
+
+Se preferir verificar manualmente, use:
+
+```bash
+# Listar businesses com WABAs owned
+curl -G "https://graph.facebook.com/v24.0/me" \
+  -d "fields=businesses{id,name,owned_whatsapp_business_accounts{id,name}}" \
+  -d "access_token=SEU_USER_TOKEN"
+
+# Ver escopos do token
+curl -G "https://graph.facebook.com/v24.0/debug_token" \
+  -d "input_token=SEU_USER_TOKEN" \
+  -d "access_token=SEU_USER_TOKEN"
+```
+
+Se `owned_whatsapp_business_accounts` estiver vazio, a WABA não pertence a esse Business ou você não tem papel suficiente.
+
+## 13. Referências
+
+### Como descobrir seu Business ID
+- Via Graph Explorer (com seu usuário):
+
+```
+GET https://graph.facebook.com/v24.0/me?fields=businesses{id,name}
+```
+
+Use o `id` do business correspondente ao que “possui” sua WABA.
 
 * Documentação oficial WhatsApp Cloud API (Embedded Signup, Webhooks)
 * Graph API v24.0
