@@ -5,8 +5,13 @@ const isProd = process.env.NODE_ENV === 'production';
 const wantPretty = process.env.LOG_PRETTY === '1' || (!isProd && process.env.LOG_PRETTY !== '0');
 const isPretty = !isProd && wantPretty;
 
+const allowedLevels = new Set(['fatal','error','warn','info','debug','trace','silent']);
+const envLevelRaw = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const mappedLevel = envLevelRaw === 'dev' ? 'debug' : envLevelRaw;
+const finalLevel = allowedLevels.has(mappedLevel) ? mappedLevel : 'info';
+
 const common = {
-  level: process.env.LOG_LEVEL || 'info',
+  level: finalLevel,
   base: null
 };
 
