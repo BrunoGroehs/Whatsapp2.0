@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WhatsApp Embedded Signup</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; }
+      .card { max-width: 780px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.5rem; box-shadow: 0 6px 20px rgba(0,0,0,0.05); }
+      h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+      button { padding: .7rem 1rem; border-radius: 8px; border: 1px solid #1b74e4; background: #1b74e4; color: #fff; cursor: pointer; }
+      button.secondary { background: #fff; color: #1b74e4; }
+      .row { display: flex; gap: .5rem; align-items: center; margin: .5rem 0; }
+      input[type=text] { padding: .6rem .7rem; border-radius: 8px; border: 1px solid #cbd5e1; width: 240px; }
+      code { background: #f1f5f9; padding: .2rem .4rem; border-radius: 6px; }
+      .muted { color: #64748b; font-size: .95rem; }
+      .ok { color: #059669; }
+      .warn { color: #b45309; }
+      pre { background: #0b1021; color: #cbd5e1; padding: 1rem; border-radius: 10px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <div id="fb-root"></div>
+
+    <div class="card">
+      <h1>Cadastro Incorporado do WhatsApp (Facebook Login)</h1>
+      <p class="muted">1) Clique em <b>Login com Facebook</b> para iniciar o fluxo de Embedded Signup. 2) Após concluir, use os botões para <b>registrar o número</b> e <b>assinar webhooks</b>.</p>
+
+      <div class="row">
+        <button id="btnLogin">Login com Facebook</button>
+        <span id="loginStatus" class="muted"></span>
+      </div>
+
+      <div class="row">
+        <label>WABA ID</label>
+        <input id="wabaId" type="text" placeholder="waba_id" />
+        <label>Phone Number ID</label>
+        <input id="phoneId" type="text" placeholder="phone_number_id" />
+      </div>
+
+      <div class="row">
+        <label>PIN (6 dígitos)</label>
+        <input id="pin" type="text" placeholder="ex: 123456" />
+        <button id="btnRegister" class="secondary">Registrar número</button>
+        <button id="btnSubscribe" class="secondary">Assinar webhook</button>
+      </div>
+
+      <p class="muted">Logs:</p>
+      <pre id="logs"></pre>
+    </div>
+
+    <script src="/config.js"></script>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <script>
+      const state = { waba_id: '', phone_number_id: '' };
+      const logEl = document.getElementById('logs');
+      function log(msg, data) {
+        const line = `[${new Date().toISOString()}] ${msg}` + (data ? `\n${JSON.stringify(data, null, 2)}` : '');
+        logEl.textContent += (logEl.textContent ? '\n' : '') + line + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function setStatus(text, ok) {
+        const el = document.getElementById('loginStatus');
+        el.textContent = text;
+        el.className = ok ? 'ok' : 'warn';
+      }
+
+      window.fbAsyncInit = function() {
+        FB.init({ appId: window.__PUBLIC_CONFIG__.facebookAppId, xfbml: true, version: window.__PUBLIC_CONFIG__.graphApiVersion });
+        log('Facebook SDK inicializado', window.__PUBLIC_CONFIG__);
+      };
+
+      function launchEmbeddedSignup() {
+        const configId = window.__PUBLIC_CONFIG__.facebookConfigId;
+        if (!configId) {
+          setStatus('FACEBOOK_CONFIG_ID ausente no servidor', false);
+          log('Erro: FACEBOOK_CONFIG_ID ausente');
+          return;
+        }
+
+        FB.login(fbLoginCallback, {
+          config_id: configId,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { version: 'v3' }
+        });
+      }
+
+      function fbLoginCallback(response) {
+        log('fbLoginCallback()', response);
+        if (response && response.authResponse && response.authResponse.code) {
+          const code = response.authResponse.code;
+          setStatus('Código recebido. Trocando por token...', true);
+          fetch('/api/fbAuthCode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, waba_id: state.waba_id, phone_number_id: state.phone_number_id })
+          })
+          .then(r => r.json())
+          .then(json => {
+            if (json.success) {
+              setStatus('Token salvo no servidor.', true);
+            } else {
+              setStatus('Falha ao salvar token', false);
+            }
+            log('fbAuthCode result', json);
+          })
+          .catch(err => { setStatus('Erro no backend', false); log('fbAuthCode error', err); });
+        } else {
+          setStatus('Login cancelado ou sem código', false);
+        }
+      }
+
+      // Receive WA_EMBEDDED_SIGNUP messages
+      window.addEventListener('message', (event) => {
+        if (event.origin !== 'https://www.facebook.com') return;
+        try {
+          const data = event.data;
+          if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
+            log('WA_EMBEDDED_SIGNUP event', data);
+            if (data.waba_id) {
+              state.waba_id = data.waba_id;
+              document.getElementById('wabaId').value = data.waba_id;
+            }
+            if (data.phone_number_id) {
+              state.phone_number_id = data.phone_number_id;
+              document.getElementById('phoneId').value = data.phone_number_id;
+            }
+            setStatus('Fluxo concluído. IDs recebidos.', true);
+          }
+        } catch (e) {
+          log('postMessage parse error', e);
+        }
+      });
+
+      // UI bindings
+      document.getElementById('btnLogin').addEventListener('click', launchEmbeddedSignup);
+      document.getElementById('btnRegister').addEventListener('click', () => {
+        const phoneId = document.getElementById('phoneId').value.trim();
+        const wabaId = document.getElementById('wabaId').value.trim();
+        const pin = document.getElementById('pin').value.trim();
+        if (!phoneId) { setStatus('Informe phone_number_id', false); return; }
+        fetch('/api/registerNumber', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone_number_id: phoneId, waba_id: wabaId || undefined, pin: pin || undefined }) })
+          .then(r => r.json()).then(json => { log('registerNumber result', json); setStatus(json.success ? 'Número registrado.' : 'Falha no registro', !!json.success); })
+          .catch(err => { log('registerNumber error', err); setStatus('Erro no backend', false); });
+      });
+      document.getElementById('btnSubscribe').addEventListener('click', () => {
+        const wabaId = document.getElementById('wabaId').value.trim();
+        if (!wabaId) { setStatus('Informe waba_id', false); return; }
+        fetch('/api/subscribeWebhook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba_id: wabaId }) })
+          .then(r => r.json()).then(json => { log('subscribeWebhook result', json); setStatus(json.success ? 'Webhook assinado.' : 'Falha ao assinar', !!json.success); })
+          .catch(err => { log('subscribeWebhook error', err); setStatus('Erro no backend', false); });
+      });
+    </script>
+  </body>
+</html>
