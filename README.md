@@ -29,7 +29,7 @@ PORT=3000
 LOG_LEVEL=dev
 GRAPH_API_VERSION=v24.0
 DEFAULT_REGISTER_PIN=123456
-LOG_PRETTY=1
+LOG_PRETTY=0  # use 1 somente em desenvolvimento local
 ```
 
 ## 3. Instalação e Execução Local
@@ -113,7 +113,7 @@ Configure a URL do webhook (ex: `https://SEU-DOMINIO/webhook`) no painel do App 
 * Implementar refresh/rotina de monitoramento de qualidade do número.
 * Migrar store para SQLite ou Postgres.
 * Adicionar testes automatizados (Jest, supertest) e lint.
-* Configurar agregação de logs (ex: enviar stdout do container para Loki/ELK).
+* Configurar agregação de logs (ex: enviar stdout do container para Loki/ELK). Pretty logs só local.
 
 ## 12. Referências
 
