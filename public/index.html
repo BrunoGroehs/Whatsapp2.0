@@ -58,7 +58,14 @@
 
       <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e5e7eb;" />
       
-      <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">🔍 Diagnóstico: Por que minha WABA não aparece?</h2>
+      <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">� Verificar Permissões CoEx</h2>
+      <p class="muted">Verifique se você tem todas as permissões necessárias para usar o modo CoEx (somente para Tech Providers certificados):</p>
+      <div class="row">
+        <button id="btnCheckCoExPermissions" class="secondary">Verificar Permissões CoEx</button>
+      </div>
+      <div id="coexPermissionsResults" style="margin-top: 1rem;"></div>
+      
+      <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem; margin-top: 2rem;">�🔍 Diagnóstico: Por que minha WABA não aparece?</h2>
       <p class="muted">Cole um User Access Token (do Graph Explorer com o usuário que faz login) e clique para diagnosticar:</p>
       <div class="row">
         <input id="debugToken" type="text" placeholder="EAAB..." style="width: 400px;" />
@@ -280,6 +287,64 @@
             log('Diagnóstico error', err); 
             setStatus('Erro ao diagnosticar', false);
             document.getElementById('debugResults').innerHTML = '<p style="color:#b45309;">Erro ao chamar diagnóstico. Veja logs.</p>';
+          });
+      });
+
+      // Check CoEx Permissions
+      document.getElementById('btnCheckCoExPermissions').addEventListener('click', () => {
+        setStatus('Verificando permissões CoEx...', true);
+        document.getElementById('coexPermissionsResults').innerHTML = '<p class="muted">Aguarde...</p>';
+        fetch('/api/coex/checkPermissions', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+          .then(r => r.json()).then(json => {
+            log('Verificação de permissões CoEx', json);
+            
+            let html = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;">';
+            html += '<h3 style="margin:0 0 0.5rem;">🔐 Status de Permissões CoEx</h3>';
+            
+            if (json.hasCoExAccess) {
+              html += '<div style="background:#d1fae5;border:1px solid #10b981;border-radius:6px;padding:0.75rem;margin:1rem 0;">';
+              html += '<strong style="color:#047857;">✅ Você TEM acesso ao modo CoEx!</strong>';
+              html += '</div>';
+            } else {
+              html += '<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:0.75rem;margin:1rem 0;">';
+              html += '<strong style="color:#b91c1c;">❌ Você NÃO tem acesso ao modo CoEx</strong>';
+              html += '</div>';
+            }
+            
+            html += '<h4 style="margin:1rem 0 0.5rem;">📋 Permissões Necessárias:</h4>';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
+            html += '<thead><tr style="background:#e5e7eb;"><th style="padding:0.5rem;text-align:left;">Permissão</th><th style="padding:0.5rem;text-align:left;">Status</th><th style="padding:0.5rem;text-align:left;">Descrição</th></tr></thead>';
+            html += '<tbody>';
+            
+            const permissions = json.requiredPermissions || [];
+            permissions.forEach(perm => {
+              const status = perm.granted ? '<span style="color:#10b981;">✅ Concedida</span>' : '<span style="color:#ef4444;">❌ Ausente</span>';
+              html += `<tr style="border-bottom:1px solid #e5e7eb;">`;
+              html += `<td style="padding:0.5rem;font-family:monospace;font-size:0.85em;">${perm.name}</td>`;
+              html += `<td style="padding:0.5rem;">${status}</td>`;
+              html += `<td style="padding:0.5rem;font-size:0.85em;">${perm.description}</td>`;
+              html += `</tr>`;
+            });
+            
+            html += '</tbody></table>';
+            
+            if (!json.hasCoExAccess) {
+              html += '<h4 style="margin:1rem 0 0.5rem;">⚠️ Ações Necessárias:</h4><ul>';
+              (json.actions || []).forEach(action => html += `<li>${action}</li>`);
+              html += '</ul>';
+            }
+            
+            html += '<details style="margin-top:1rem;"><summary style="cursor:pointer;font-weight:600;">Ver resposta completa (JSON)</summary>';
+            html += `<pre style="margin-top:0.5rem;max-height:300px;overflow:auto;">${JSON.stringify(json, null, 2)}</pre></details>`;
+            html += '</div>';
+            
+            document.getElementById('coexPermissionsResults').innerHTML = html;
+            setStatus(json.hasCoExAccess ? 'Permissões CoEx: OK' : 'Permissões CoEx: Insuficientes', json.hasCoExAccess);
+          })
+          .catch(err => { 
+            log('Erro ao verificar permissões', err);
+            setStatus('Erro ao verificar permissões', false);
+            document.getElementById('coexPermissionsResults').innerHTML = '<p style="color:#b45309;">Erro ao verificar. Veja logs.</p>';
           });
       });
     </script>
