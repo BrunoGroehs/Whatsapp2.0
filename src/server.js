@@ -189,24 +189,24 @@ app.post('/api/debug/wabas', async (req, res) => {
 
     const diagnosis = { timestamp: new Date().toISOString(), checks: [] };
 
-    // 1. Get user's businesses with owned WABAs
+    // 1. Get user's businesses with owned WABAs and their phone numbers
     try {
       const { data: bizData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/me`, {
-        params: { fields: 'businesses{id,name,owned_whatsapp_business_accounts{id,name,timezone}}', access_token }
+        params: { fields: 'businesses{id,name,owned_whatsapp_business_accounts{id,name,timezone,phone_numbers{id,display_phone_number,verified_name,code_verification_status,quality_rating}}}', access_token }
       });
-      diagnosis.checks.push({ check: 'Businesses with owned WABAs', success: true, data: bizData });
+      diagnosis.checks.push({ check: 'Businesses with owned WABAs + Phone Numbers', success: true, data: bizData });
     } catch (err) {
-      diagnosis.checks.push({ check: 'Businesses with owned WABAs', success: false, error: err?.response?.data || err.message });
+      diagnosis.checks.push({ check: 'Businesses with owned WABAs + Phone Numbers', success: false, error: err?.response?.data || err.message });
     }
 
-    // 2. Get user's businesses with client (shared) WABAs
+    // 2. Get user's businesses with client (shared) WABAs and their phone numbers
     try {
       const { data: clientData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/me`, {
-        params: { fields: 'businesses{id,name,client_whatsapp_business_accounts{id,name}}', access_token }
+        params: { fields: 'businesses{id,name,client_whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}}', access_token }
       });
-      diagnosis.checks.push({ check: 'Businesses with client (shared) WABAs', success: true, data: clientData });
+      diagnosis.checks.push({ check: 'Businesses with client (shared) WABAs + Phone Numbers', success: true, data: clientData });
     } catch (err) {
-      diagnosis.checks.push({ check: 'Businesses with client WABAs', success: false, error: err?.response?.data || err.message });
+      diagnosis.checks.push({ check: 'Businesses with client WABAs + Phone Numbers', success: false, error: err?.response?.data || err.message });
     }
 
     // 3. Debug token to see granted scopes
@@ -220,11 +220,31 @@ app.post('/api/debug/wabas', async (req, res) => {
     }
 
     // 4. Summary and recommendations
-    const summary = { issues: [], recommendations: [] };
+    const summary = { issues: [], recommendations: [], phoneNumbers: [] };
     
-    const ownedCheck = diagnosis.checks.find(c => c.check === 'Businesses with owned WABAs');
+    const ownedCheck = diagnosis.checks.find(c => c.check === 'Businesses with owned WABAs + Phone Numbers');
     if (ownedCheck?.success) {
       const businesses = ownedCheck.data?.businesses?.data || [];
+      businesses.forEach(biz => {
+        const wabas = biz.owned_whatsapp_business_accounts?.data || [];
+        wabas.forEach(waba => {
+          const phones = waba.phone_numbers?.data || [];
+          phones.forEach(phone => {
+            summary.phoneNumbers.push({
+              type: 'owned',
+              business_id: biz.id,
+              business_name: biz.name,
+              waba_id: waba.id,
+              waba_name: waba.name,
+              phone_id: phone.id,
+              display_phone_number: phone.display_phone_number,
+              verified_name: phone.verified_name,
+              quality_rating: phone.quality_rating
+            });
+          });
+        });
+      });
+      
       const totalOwned = businesses.reduce((sum, b) => sum + (b.owned_whatsapp_business_accounts?.data?.length || 0), 0);
       if (totalOwned === 0) {
         summary.issues.push('Nenhuma WABA "owned" encontrada. WABAs compartilhadas não aparecem no Embedded Signup.');
@@ -233,6 +253,29 @@ app.post('/api/debug/wabas', async (req, res) => {
       } else {
         summary.issues.push(`${totalOwned} WABA(s) owned encontrada(s). Deveria aparecer no seletor.`);
       }
+    }
+
+    const clientCheck = diagnosis.checks.find(c => c.check === 'Businesses with client (shared) WABAs + Phone Numbers');
+    if (clientCheck?.success) {
+      const businesses = clientCheck.data?.businesses?.data || [];
+      businesses.forEach(biz => {
+        const wabas = biz.client_whatsapp_business_accounts?.data || [];
+        wabas.forEach(waba => {
+          const phones = waba.phone_numbers?.data || [];
+          phones.forEach(phone => {
+            summary.phoneNumbers.push({
+              type: 'client/shared',
+              business_id: biz.id,
+              business_name: biz.name,
+              waba_id: waba.id,
+              waba_name: waba.name,
+              phone_id: phone.id,
+              display_phone_number: phone.display_phone_number,
+              verified_name: phone.verified_name
+            });
+          });
+        });
+      });
     }
 
     const scopeCheck = diagnosis.checks.find(c => c.check === 'Token debug (scopes)');
