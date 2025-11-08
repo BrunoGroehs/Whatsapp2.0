@@ -181,6 +181,74 @@ app.post('/api/coex/checkStatus', async (req, res) => {
   }
 });
 
+// CoEx: Check if app/user has CoEx permissions
+app.post('/api/coex/checkPermissions', async (req, res) => {
+  try {
+    const token = getLastAccessToken();
+    if (!token) {
+      return res.json({
+        hasCoExAccess: false,
+        message: 'Nenhum token disponível. Faça login primeiro.',
+        requiredPermissions: [
+          { name: 'whatsapp_business_management', granted: false, description: 'Gerenciar WhatsApp Business Accounts', critical: true },
+          { name: 'whatsapp_business_messaging', granted: false, description: 'Enviar e receber mensagens', critical: true },
+          { name: 'business_management', granted: false, description: 'Gerenciar Business Manager', critical: true },
+          { name: 'manage_app_solution', granted: false, description: 'Acesso de Tech Provider (CoEx)', critical: true }
+        ],
+        actions: [
+          'Faça login primeiro usando o botão "Login com Facebook"',
+          'Verifique se você é um Tech Provider certificado pela Meta'
+        ]
+      });
+    }
+
+    // Debug token to check scopes
+    const { data: debugData } = await axios.get(`https://graph.facebook.com/${GRAPH_API_VERSION}/debug_token`, {
+      params: { input_token: token, access_token: token }
+    });
+
+    const scopes = debugData?.data?.scopes || [];
+    const requiredPerms = [
+      { name: 'whatsapp_business_management', granted: scopes.includes('whatsapp_business_management'), description: 'Gerenciar WhatsApp Business Accounts', critical: true },
+      { name: 'whatsapp_business_messaging', granted: scopes.includes('whatsapp_business_messaging'), description: 'Enviar e receber mensagens', critical: true },
+      { name: 'business_management', granted: scopes.includes('business_management'), description: 'Gerenciar Business Manager', critical: true },
+      { name: 'manage_app_solution', granted: scopes.includes('manage_app_solution'), description: 'Acesso de Tech Provider (OBRIGATÓRIO para CoEx)', critical: true }
+    ];
+
+    const allGranted = requiredPerms.every(p => p.granted);
+    const hasManageAppSolution = scopes.includes('manage_app_solution');
+
+    const actions = [];
+    if (!hasManageAppSolution) {
+      actions.push('❌ CRÍTICO: Permissão "manage_app_solution" ausente. Isso significa que você NÃO é um Tech Provider certificado.');
+      actions.push('📝 Para obter acesso CoEx, você precisa se tornar um Tech Provider certificado pela Meta.');
+      actions.push('🔗 Candidatar-se: https://developers.facebook.com/partners/');
+      actions.push('📚 Documentação: https://developers.facebook.com/docs/whatsapp/business-management-api/guides/migrate-phone-number');
+    }
+    if (!scopes.includes('whatsapp_business_management')) {
+      actions.push('Configure a permissão "whatsapp_business_management" no App Dashboard');
+    }
+    if (!scopes.includes('business_management')) {
+      actions.push('Configure a permissão "business_management" no App Dashboard');
+    }
+
+    return res.json({
+      hasCoExAccess: allGranted && hasManageAppSolution,
+      message: allGranted && hasManageAppSolution 
+        ? 'Você tem todas as permissões necessárias para usar CoEx!' 
+        : 'Permissões insuficientes para CoEx',
+      requiredPermissions: requiredPerms,
+      tokenScopes: scopes,
+      appId: debugData?.data?.app_id,
+      tokenType: debugData?.data?.type,
+      actions: actions.length > 0 ? actions : ['Todas as permissões estão configuradas corretamente!'],
+      isTechProvider: hasManageAppSolution
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'checkPermissions failed', details: err?.response?.data || err.message });
+  }
+});
+
 // Debug endpoint: diagnose why existing WABA doesn't appear in Embedded Signup
 app.post('/api/debug/wabas', async (req, res) => {
   try {
