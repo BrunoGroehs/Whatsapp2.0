@@ -46,6 +46,17 @@
       </div>
 
       <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e5e7eb;" />
+
+      <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">📱 CoEx: Sincronizar WhatsApp Business App</h2>
+      <p class="muted">Após conectar número existente via CoEx, sincronize contatos e histórico:</p>
+      <div class="row">
+        <button id="btnCheckCoEx" class="secondary">Verificar status CoEx</button>
+        <button id="btnSyncContacts" class="secondary">Sincronizar contatos</button>
+        <button id="btnSyncHistory" class="secondary">Sincronizar histórico</button>
+      </div>
+      <p class="muted" style="font-size: 0.9rem;">⚠️ Você tem 24h após o onboarding para sincronizar. Aguarde webhooks após clicar.</p>
+
+      <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e5e7eb;" />
       
       <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">🔍 Diagnóstico: Por que minha WABA não aparece?</h2>
       <p class="muted">Cole um User Access Token (do Graph Explorer com o usuário que faz login) e clique para diagnosticar:</p>
@@ -90,11 +101,16 @@
         }
 
         const businessId = window.__PUBLIC_CONFIG__.facebookBusinessId;
-        const extras = { version: 'v3' };
+        const extras = { 
+          sessionInfoVersion: '3',  // obrigatório para CoEx
+          featureType: 'whatsapp_business_app_onboarding'  // ATIVA O MODO CoEx
+        };
         if (businessId) {
           // hint para o fluxo escolher o business correto
           extras.setup = { business: { id: businessId } };
         }
+
+        log('Iniciando Embedded Signup com CoEx habilitado', extras);
         FB.login(fbLoginCallback, {
           config_id: configId,
           response_type: 'code',
@@ -135,6 +151,13 @@
           const data = event.data;
           if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
             log('WA_EMBEDDED_SIGNUP event', data);
+            
+            // Detectar se é fluxo CoEx
+            if (data.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
+              log('✅ CoEx: Número do WhatsApp Business App conectado!', data);
+              setStatus('CoEx: Número conectado! Sincronizando dados...', true);
+            }
+            
             if (data.waba_id) {
               state.waba_id = data.waba_id;
               document.getElementById('wabaId').value = data.waba_id;
@@ -143,7 +166,10 @@
               state.phone_number_id = data.phone_number_id;
               document.getElementById('phoneId').value = data.phone_number_id;
             }
-            setStatus('Fluxo concluído. IDs recebidos.', true);
+            
+            if (!data.event || data.event !== 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
+              setStatus('Fluxo concluído. IDs recebidos.', true);
+            }
           }
         } catch (e) {
           log('postMessage parse error', e);
@@ -167,6 +193,38 @@
         fetch('/api/subscribeWebhook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba_id: wabaId }) })
           .then(r => r.json()).then(json => { log('subscribeWebhook result', json); setStatus(json.success ? 'Webhook assinado.' : 'Falha ao assinar', !!json.success); })
           .catch(err => { log('subscribeWebhook error', err); setStatus('Erro no backend', false); });
+      });
+
+      // CoEx: Check status
+      document.getElementById('btnCheckCoEx').addEventListener('click', () => {
+        const phoneId = document.getElementById('phoneId').value.trim();
+        const wabaId = document.getElementById('wabaId').value.trim();
+        if (!phoneId) { setStatus('Informe phone_number_id', false); return; }
+        fetch('/api/coex/checkStatus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone_number_id: phoneId, waba_id: wabaId || undefined }) })
+          .then(r => r.json()).then(json => { log('CoEx checkStatus result', json); setStatus(json.isCoEx ? '✅ Número em modo CoEx!' : '⚠️ Número NÃO está em CoEx', !!json.success); })
+          .catch(err => { log('checkStatus error', err); setStatus('Erro no backend', false); });
+      });
+
+      // CoEx: Sync contacts
+      document.getElementById('btnSyncContacts').addEventListener('click', () => {
+        const phoneId = document.getElementById('phoneId').value.trim();
+        const wabaId = document.getElementById('wabaId').value.trim();
+        if (!phoneId) { setStatus('Informe phone_number_id', false); return; }
+        setStatus('Sincronizando contatos...', true);
+        fetch('/api/coex/syncContacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone_number_id: phoneId, waba_id: wabaId || undefined }) })
+          .then(r => r.json()).then(json => { log('CoEx syncContacts result', json); setStatus(json.success ? 'Contatos em sincronização. Aguarde webhooks smb_app_state_sync.' : 'Falha ao sincronizar', !!json.success); })
+          .catch(err => { log('syncContacts error', err); setStatus('Erro no backend', false); });
+      });
+
+      // CoEx: Sync history
+      document.getElementById('btnSyncHistory').addEventListener('click', () => {
+        const phoneId = document.getElementById('phoneId').value.trim();
+        const wabaId = document.getElementById('wabaId').value.trim();
+        if (!phoneId) { setStatus('Informe phone_number_id', false); return; }
+        setStatus('Sincronizando histórico...', true);
+        fetch('/api/coex/syncHistory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone_number_id: phoneId, waba_id: wabaId || undefined }) })
+          .then(r => r.json()).then(json => { log('CoEx syncHistory result', json); setStatus(json.success ? 'Histórico em sincronização. Aguarde webhooks "history".' : 'Falha ao sincronizar', !!json.success); })
+          .catch(err => { log('syncHistory error', err); setStatus('Erro no backend', false); });
       });
 
       document.getElementById('btnDebug').addEventListener('click', () => {

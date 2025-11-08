@@ -121,6 +121,66 @@ app.post('/api/subscribeWebhook', async (req, res) => {
   }
 });
 
+// CoEx: Sync contacts from WhatsApp Business App
+app.post('/api/coex/syncContacts', async (req, res) => {
+  try {
+    const { phone_number_id, access_token, waba_id } = req.body || {};
+    if (!phone_number_id) return res.status(400).json({ error: 'Missing phone_number_id' });
+
+    const token = access_token || getWaba(waba_id)?.access_token || getLastAccessToken();
+    if (!token) return res.status(400).json({ error: 'Missing access token' });
+
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phone_number_id}/smb_app_data`;
+    const payload = { messaging_product: 'whatsapp', sync_type: 'smb_app_state_sync' };
+    const { data } = await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+    return res.json({ success: true, result: data, note: 'Aguarde webhooks smb_app_state_sync com os contatos' });
+  } catch (err) {
+    return res.status(500).json({ error: 'syncContacts failed', details: err?.response?.data || err.message });
+  }
+});
+
+// CoEx: Sync message history from WhatsApp Business App
+app.post('/api/coex/syncHistory', async (req, res) => {
+  try {
+    const { phone_number_id, access_token, waba_id } = req.body || {};
+    if (!phone_number_id) return res.status(400).json({ error: 'Missing phone_number_id' });
+
+    const token = access_token || getWaba(waba_id)?.access_token || getLastAccessToken();
+    if (!token) return res.status(400).json({ error: 'Missing access token' });
+
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phone_number_id}/smb_app_data`;
+    const payload = { messaging_product: 'whatsapp', sync_type: 'history' };
+    const { data } = await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+    return res.json({ success: true, result: data, note: 'Se cliente compartilhou histórico, webhooks "history" chegando. Caso contrário webhook com erro 2593109.' });
+  } catch (err) {
+    return res.status(500).json({ error: 'syncHistory failed', details: err?.response?.data || err.message });
+  }
+});
+
+// CoEx: Check if number is in CoEx mode (on biz app + Cloud API)
+app.post('/api/coex/checkStatus', async (req, res) => {
+  try {
+    const { phone_number_id, access_token, waba_id } = req.body || {};
+    if (!phone_number_id) return res.status(400).json({ error: 'Missing phone_number_id' });
+
+    const token = access_token || getWaba(waba_id)?.access_token || getLastAccessToken();
+    if (!token) return res.status(400).json({ error: 'Missing access token' });
+
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phone_number_id}`;
+    const { data } = await axios.get(url, {
+      params: { fields: 'is_on_biz_app,platform_type', access_token: token }
+    });
+    const isCoEx = data.is_on_biz_app === true && data.platform_type === 'CLOUD_API';
+    return res.json({ success: true, result: data, isCoEx, note: isCoEx ? 'Número em modo CoEx (app + Cloud API)' : 'Número NÃO está em CoEx' });
+  } catch (err) {
+    return res.status(500).json({ error: 'checkStatus failed', details: err?.response?.data || err.message });
+  }
+});
+
 // Debug endpoint: diagnose why existing WABA doesn't appear in Embedded Signup
 app.post('/api/debug/wabas', async (req, res) => {
   try {
@@ -210,16 +270,46 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', (req, res) => {
   try {
     const body = req.body;
-    // Minimal logging; expand as needed
-  logger.info({ event: body }, 'Webhook event received');
+    
+    // CoEx-specific webhooks
+    if (body?.entry?.[0]?.changes?.[0]?.field) {
+      const field = body.entry[0].changes[0].field;
+      const value = body.entry[0].changes[0].value;
+      
+      switch (field) {
+        case 'history':
+          // Histórico de mensagens do WhatsApp Business App
+          logger.info({ webhook: 'history', data: value }, 'CoEx: Histórico de mensagens recebido');
+          // TODO: processar e armazenar histórico (threads, messages)
+          break;
+        case 'smb_app_state_sync':
+          // Contatos do WhatsApp Business App
+          logger.info({ webhook: 'smb_app_state_sync', data: value }, 'CoEx: Contatos sincronizados');
+          // TODO: processar e armazenar contatos (state_sync)
+          break;
+        case 'smb_message_echoes':
+          // Mensagens enviadas pelo app (espelhar na sua UI)
+          logger.info({ webhook: 'smb_message_echoes', data: value }, 'CoEx: Mensagem enviada pelo app');
+          // TODO: exibir na UI a mensagem enviada
+          break;
+        case 'account_update':
+          // Atualização da conta (ex: PARTNER_REMOVED quando cliente desconecta)
+          logger.info({ webhook: 'account_update', data: value }, 'CoEx: Atualização de conta');
+          break;
+        default:
+          logger.info({ event: body, field }, 'Webhook event received');
+      }
+    } else {
+      logger.info({ event: body }, 'Webhook event received');
+    }
+    
     // Always 200 to acknowledge receipt
     res.sendStatus(200);
   } catch (e) {
+    logger.error({ error: e.message }, 'Webhook processing error');
     res.sendStatus(500);
   }
-});
-
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+});app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);

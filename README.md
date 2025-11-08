@@ -116,10 +116,181 @@ Configure a URL do webhook (ex: `https://SEU-DOMINIO/webhook`) no painel do App 
 * Adicionar testes automatizados (Jest, supertest) e lint.
 * Configurar agregação de logs (ex: enviar stdout do container para Loki/ELK). Pretty logs só local.
 
-## 12. Troubleshooting: Por que minha WABA não aparece no Embedded Signup?
+## 12. Modo CoEx (Coexistence) para Tech Providers
+
+**✅ APENAS para Solution Partners e Tech Providers certificados**
+
+### O que é CoEx?
+
+Permite que clientes conectem seus números existentes do **WhatsApp Business App** (celular) à Cloud API mantendo:
+- ✅ Uso simultâneo do app móvel
+- ✅ Histórico de conversas preservado
+- ✅ Sincronização automática de mensagens
+- ⚠️ Throughput limitado a 20 mensagens/segundo
+
+### Requisitos
+
+1. **Ser Tech Provider ou Solution Partner** certificado pela Meta
+2. WhatsApp Business App **versão 2.24.17+** (cliente)
+3. Webhooks subscritos a campos CoEx: `history`, `smb_app_state_sync`, `smb_message_echoes`, `account_update`
+4. País suportado (exceto Nigéria e África do Sul)
+
+### Como funciona
+
+1. **Cliente clica** "Login com Facebook" (fluxo mostra opção "Connect existing WhatsApp Business account")
+2. **Cliente informa** número do WhatsApp Business App
+3. **Cliente escaneia** QR code exibido usando o app móvel
+4. **Cliente escolhe** se compartilha ou não o histórico
+5. **Fluxo retorna** event: `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` (em vez de evento padrão)
+6. **Você sincroniza** contatos e histórico em até 24h
+
+### Configuração (já implementada)
+
+O código já está configurado com:
+
+```javascript
+extras: { 
+  sessionInfoVersion: '3',
+  featureType: 'whatsapp_business_app_onboarding'  // Ativa CoEx
+}
+```
+
+### Fluxo pós-onboarding
+
+1. **Após receber `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`**:
+   - NÃO registre o número (já está registrado)
+   - Assine webhooks normalmente (`/api/subscribeWebhook`)
+
+2. **Sincronizar contatos** (obrigatório, 1x):
+   - Clique em "Sincronizar contatos"
+   - Aguarde webhooks `smb_app_state_sync` com os contatos
+   - Webhook chegará toda vez que cliente adicionar/editar/remover contato no app
+
+3. **Sincronizar histórico** (obrigatório, 1x):
+   - Clique em "Sincronizar histórico"
+   - Se cliente aceitou compartilhar: chegam webhooks `history` (em fases: 0-1 dia, 1-90 dias, 90-180 dias)
+   - Se cliente recusou: chega webhook `history` com erro `2593109`
+
+4. **Espelhar mensagens** do app:
+   - Quando cliente envia mensagem pelo WhatsApp Business App, chega webhook `smb_message_echoes`
+   - Exiba na sua UI para manter sincronia
+
+### Endpoints disponíveis
+
+| Endpoint | Descrição |
+|----------|-----------|
+| `POST /api/coex/checkStatus` | Verifica se número está em modo CoEx (`is_on_biz_app: true`, `platform_type: CLOUD_API`) |
+| `POST /api/coex/syncContacts` | Inicia sincronização de contatos (POST `smb_app_data` com `sync_type: smb_app_state_sync`) |
+| `POST /api/coex/syncHistory` | Inicia sincronização de histórico (POST `smb_app_data` com `sync_type: history`) |
+
+### Webhooks CoEx
+
+Configure no painel do App > WhatsApp > Configuration:
+
+- ☑️ `history` — histórico de mensagens (180 dias)
+- ☑️ `smb_app_state_sync` — contatos do app
+- ☑️ `smb_message_echoes` — mensagens enviadas pelo app
+- ☑️ `account_update` — desconexão (PARTNER_REMOVED)
+
+### Limitações
+
+- **Throughput fixo**: 20 mensagens/segundo (vs 80-1000 mps normal)
+- **Sincronização única**: só pode sincronizar 1x; se precisar repetir, cliente deve refazer fluxo
+- **Prazo**: 24h para sincronizar após onboarding
+- **Companion devices**: WhatsApp Windows e WearOS não suportados (mensagens não geram webhooks)
+
+### Exemplo de uso
+
+```bash
+# 1. Cliente completa Embedded Signup (CoEx)
+# 2. Você recebe waba_id e phone_number_id
+
+# 3. Verificar status CoEx
+curl -X POST http://localhost:3000/api/coex/checkStatus \
+  -H 'Content-Type: application/json' \
+  -d '{"phone_number_id":"123456789","waba_id":"987654321"}'
+
+# 4. Sincronizar contatos
+curl -X POST http://localhost:3000/api/coex/syncContacts \
+  -H 'Content-Type: application/json' \
+  -d '{"phone_number_id":"123456789"}'
+
+# 5. Sincronizar histórico
+curl -X POST http://localhost:3000/api/coex/syncHistory \
+  -H 'Content-Type: application/json' \
+  -d '{"phone_number_id":"123456789"}'
+```
+
+### Desconexão
+
+Cliente pode desconectar pelo WhatsApp Business App:
+- Settings > Account > Business Platform > Disconnect Account
+- Você receberá webhook `account_update` com `event: PARTNER_REMOVED`
+
+Não use `POST /<PHONE_ID>/deregister` em números CoEx (não funciona).
+
+### Suporte
+
+Se precisar de ajuda com CoEx:
+- Question Topic: "WABiz: Onboarding" + "TechProvider: Onboarding"
+- Request Type: "Embedded Signup - Coexistence Onboarding"
+
+Para problemas de API:
+- Question Topic: "WABiz: Cloud API"
+- Request Type: "Coexistence Data Synchronzation APIs and Webhooks"
+
+## 13. Migração de Número Existente (WhatsApp Business App → Cloud API)
+
+### ⚠️ Importante: Diferença entre WABA e Número Individual
+
+- **WABA (WhatsApp Business Account)**: É a conta "guarda-chuva" no Business Manager que pode ter vários números.
+- **Número de telefone individual**: Um número específico registrado no app WhatsApp Business do celular.
+
+O **Embedded Signup** só mostra **WABAs existentes** (contas Business completas), não números individuais do app móvel.
+
+### Como migrar um número do WhatsApp Business App para Cloud API
+
+Você tem **duas opções**:
+
+#### Opção 1: Migração com PERDA de histórico (oficial Meta)
+
+1. **Fazer backup** do histórico de conversas (Android/iOS)
+2. **Deletar a conta** no WhatsApp Business App:
+   - Abra o app WhatsApp Business
+   - Vá em Configurações > Conta > Deletar minha conta
+   - Confirme a exclusão
+   - Aguarde até 3 minutos
+3. **Aguardar o número ficar disponível** (até 3 minutos)
+4. **Adicionar o número** via Cloud API:
+   - Use o Embedded Signup para criar uma **nova WABA**
+   - Durante o fluxo, informe o número de telefone liberado
+   - Complete a verificação (SMS/chamada)
+   - Registre o número com este projeto
+
+⚠️ **Você perderá**: histórico de mensagens, não poderá usar o app móvel novamente com esse número (a menos que desregistre da Cloud API).
+
+#### Opção 2: Migração com PRESERVAÇÃO de histórico (via Solution Provider)
+
+Use um [Solution Provider certificado](https://www.facebook.com/business/partner-directory/search?solution_type=messaging) que suporta **"business app number onboarding"**. Isso permite:
+- Manter o histórico de conversas
+- Usar o WhatsApp Business App E a solução do parceiro simultaneamente
+
+Parceiros suportam fluxo CoEx (co-existente), mas isso **não está disponível** via Embedded Signup direto.
+
+### Por que não vejo meu número do app móvel no Embedded Signup?
+
+O Embedded Signup **NÃO lista números individuais** do WhatsApp Business App. Ele só mostra:
+- WABAs (contas Business) já criadas no Business Manager
+- Opção de criar uma nova WABA
+
+Para usar seu número existente, você deve **deletar do app** e **adicionar via Cloud API** (opção 1 acima).
+
+## 13. Troubleshooting: Por que minha WABA não aparece no Embedded Signup?
 
 ### Problema
 Ao clicar em "Login com Facebook" no fluxo de Embedded Signup, só aparece a opção "Criar uma conta do WhatsApp Business", mas não vejo minha WABA existente para conectar.
+
+**Nota**: Se você está procurando migrar um **número individual** do app WhatsApp Business, veja a seção anterior "Migração de Número Existente".
 
 ### Ferramenta de Diagnóstico
 
@@ -171,7 +342,20 @@ curl -G "https://graph.facebook.com/v24.0/debug_token" \
 
 Se `owned_whatsapp_business_accounts` estiver vazio, a WABA não pertence a esse Business ou você não tem papel suficiente.
 
-## 13. Referências
+### Fluxo para adicionar número após deletar do app
+
+Depois de deletar a conta do WhatsApp Business App (se aplicável):
+
+1. Use o Embedded Signup normalmente (clique "Criar uma conta do WhatsApp Business")
+2. Durante o fluxo, informe:
+   - Dados da empresa (nome, endereço, categoria)
+   - **Número de telefone** (o que você deletou do app)
+   - Método de verificação (SMS ou chamada)
+3. Após verificar, o número será vinculado à nova WABA
+4. Use os botões "Registrar número" e "Assinar webhook" neste app
+5. Pronto para enviar mensagens via Cloud API
+
+## 14. Referências
 
 ### Como descobrir seu Business ID
 - Via Graph Explorer (com seu usuário):
