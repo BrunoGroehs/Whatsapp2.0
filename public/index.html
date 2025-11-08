@@ -239,6 +239,26 @@
             html += '<h3 style="margin:0 0 0.5rem;">📋 Resultado do Diagnóstico</h3>';
             
             if (json.summary) {
+              // Show phone numbers first (most important)
+              if (json.summary.phoneNumbers && json.summary.phoneNumbers.length > 0) {
+                html += '<h4 style="margin:1rem 0 0.5rem;">📞 Números de Telefone Disponíveis:</h4>';
+                html += '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
+                html += '<thead><tr style="background:#e5e7eb;"><th style="padding:0.5rem;text-align:left;">Tipo</th><th style="padding:0.5rem;text-align:left;">WABA ID</th><th style="padding:0.5rem;text-align:left;">Phone ID</th><th style="padding:0.5rem;text-align:left;">Número</th><th style="padding:0.5rem;text-align:left;">Nome Verificado</th></tr></thead>';
+                html += '<tbody>';
+                json.summary.phoneNumbers.forEach(phone => {
+                  const typeColor = phone.type === 'owned' ? '#10b981' : '#f59e0b';
+                  html += `<tr style="border-bottom:1px solid #e5e7eb;">`;
+                  html += `<td style="padding:0.5rem;"><span style="background:${typeColor};color:white;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.8em;">${phone.type}</span></td>`;
+                  html += `<td style="padding:0.5rem;font-family:monospace;font-size:0.85em;">${phone.waba_id}</td>`;
+                  html += `<td style="padding:0.5rem;font-family:monospace;font-size:0.85em;"><strong>${phone.phone_id}</strong></td>`;
+                  html += `<td style="padding:0.5rem;">${phone.display_phone_number || 'N/A'}</td>`;
+                  html += `<td style="padding:0.5rem;">${phone.verified_name || 'N/A'}</td>`;
+                  html += `</tr>`;
+                });
+                html += '</tbody></table>';
+                html += '<p style="margin-top:0.5rem;font-size:0.85em;color:#6b7280;"><strong>📋 Copie o Phone ID</strong> da tabela acima e cole no campo "Phone Number ID" no topo da página.</p>';
+              }
+              
               html += '<h4 style="margin:1rem 0 0.5rem;">⚠️ Problemas Encontrados:</h4><ul>';
               json.summary.issues.forEach(issue => html += `<li>${issue}</li>`);
               html += '</ul>';
